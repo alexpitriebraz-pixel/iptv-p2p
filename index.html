@@ -851,11 +851,17 @@ var S = {
 // URL do tracker WebRTC — detecta automaticamente se está em HTTPS (Render) ou HTTP (local)
 var TRACKER_WS = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
 
-// Proxy reverso: roteia chamadas HTTP pelo servidor quando o app está em HTTPS
+// Proxy reverso: usado APENAS para chamadas de API (auth, listas)
+// Streams vão diretamente para o servidor (Smart TVs permitem HTTP em apps)
 function pUrl(url) {
     if (location.protocol === 'https:' && url && url.startsWith('http:')) {
         return '/proxy?url=' + encodeURIComponent(url);
     }
+    return url;
+}
+
+// URL de stream: direta (sem proxy — CDN bloqueia IPs de cloud)
+function streamUrl(url) {
     return url;
 }
 
@@ -1245,7 +1251,7 @@ function playItem(item) {
 
     if (mode === 'series-ep') {
         var ext = (item._ext || 'mp4').toLowerCase();
-        url = pUrl(S.dns + '/series/' + encodeURIComponent(S.user) + '/' + encodeURIComponent(S.pass) +
+        url = streamUrl(S.dns + '/series/' + encodeURIComponent(S.user) + '/' + encodeURIComponent(S.pass) +
               '/' + item.stream_id + '.' + ext);
         startPlayer(url, item.stream_id, name, 'SÉRIE', ext !== 'm3u8');
         return;
@@ -1259,11 +1265,11 @@ function playItem(item) {
     sid = item.stream_id || item.id || '';
 
     if (mode === 'movies') {
-        url = pUrl(S.dns + '/movie/' + encodeURIComponent(S.user) + '/' + encodeURIComponent(S.pass) +
+        url = streamUrl(S.dns + '/movie/' + encodeURIComponent(S.user) + '/' + encodeURIComponent(S.pass) +
               '/' + sid + '.m3u8');
     } else {
         // live / catchup
-        url = pUrl(S.dns + '/live/' + encodeURIComponent(S.user) + '/' + encodeURIComponent(S.pass) +
+        url = streamUrl(S.dns + '/live/' + encodeURIComponent(S.user) + '/' + encodeURIComponent(S.pass) +
               '/' + sid + '.m3u8');
     }
 
@@ -1351,10 +1357,13 @@ function startPlayer(streamUrl, streamId, name, typeLabel, forceNative) {
 
     var vid = document.getElementById('vid');
 
-    // Vídeo nativo: MP4/MKV de séries, ou navegadores sem HLS.js
+    // Vídeo nativo: MP4/MKV de séries, ou navegadores sem HLS.js (Smart TVs têm HLS nativo)
     if (forceNative || !Hls.isSupported()) {
         vid.src = streamUrl;
-        vid.play().catch(function(e) { showPlayerError('Erro ao reproduzir: ' + e.message); });
+        vid.addEventListener('error', function() {
+            showPlayerError('Erro ao reproduzir. Em navegadores desktop use Chrome com --allow-running-insecure-content ou acesse via http://');
+        }, { once: true });
+        vid.play().catch(function() {});
         connectSignaling(streamId);
         startStatsLoop();
         return;
@@ -1362,7 +1371,7 @@ function startPlayer(streamUrl, streamId, name, typeLabel, forceNative) {
 
     var hlsCfg = {};
 
-    // P2P Media Loader: só usa quando NÃO estiver via proxy (para não bypassar o proxy)
+    // P2P só quando não for URL proxied
     var isProxied = streamUrl.startsWith('/proxy');
     if (!isProxied && typeof HlsJsP2PEngine !== 'undefined') {
         try {
@@ -1400,14 +1409,16 @@ function startPlayer(streamUrl, streamId, name, typeLabel, forceNative) {
 
     hls.on(Hls.Events.ERROR, function(ev, d) {
         if (d.fatal) {
-            console.error('HLS fatal error:', d.type, d.details, d);
-            var msg = 'Erro: ' + d.details;
-            if (d.details === 'manifestParsingError') {
-                msg = 'Formato de stream inválido (manifestParsingError). Abre o console do browser (F12) para mais detalhes.';
-            } else if (d.details === 'manifestLoadError' || d.details === 'manifestLoadTimeOut') {
-                msg = 'Falha ao carregar stream. Verifique a URL do servidor.';
-            } else if (d.type === 'networkError') {
-                msg = 'Erro de rede: ' + d.details;
+            console.error('HLS fatal:', d.type, d.details);
+            var msg;
+            if (d.type === 'networkError') {
+                msg = 'Stream HTTP bloqueado pelo browser (mixed content).\n' +
+                      'Solução: acesse via Smart TV, ou no Chrome desktop abra: ' +
+                      'chrome://flags → "Insecure origins treated as secure".';
+            } else if (d.details === 'manifestParsingError') {
+                msg = 'Formato inválido. Verifique se a URL do servidor está correta.';
+            } else {
+                msg = 'Erro no stream: ' + d.details;
             }
             showPlayerError(msg);
         }
