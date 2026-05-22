@@ -1,0 +1,15 @@
+{
+  "name": "iptv-p2p",
+  "version": "1.0.0",
+  "description": "IPTV P2P Player com WebRTC Mesh e Xtream Codes",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.17.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

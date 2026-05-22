@@ -1,0 +1,1757 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IPTV P2P Player</title>
+
+    <!--
+    ╔══════════════════════════════════════════════════════════════╗
+    ║                   AVISO SOBRE CORS                          ║
+    ╠══════════════════════════════════════════════════════════════╣
+    ║ Servidores Xtream Codes geralmente não enviam o header      ║
+    ║ Access-Control-Allow-Origin, causando bloqueio CORS quando  ║
+    ║ você abre este arquivo localmente no navegador do PC.       ║
+    ║                                                             ║
+    ║ SOLUÇÕES (escolha uma):                                     ║
+    ║                                                             ║
+    ║ 1. EXTENSÃO DE NAVEGADOR (testes rápidos no PC):            ║
+    ║    Chrome → "CORS Unblock" ou "Allow CORS"                  ║
+    ║    Firefox → "CORS Everywhere"                              ║
+    ║                                                             ║
+    ║ 2. PROXY NGINX (recomendado em produção):                   ║
+    ║    location /xtream/ {                                      ║
+    ║        proxy_pass http://seu-servidor:8080/;               ║
+    ║        add_header Access-Control-Allow-Origin *;           ║
+    ║    }                                                        ║
+    ║                                                             ║
+    ║ 3. PROXY NODE.JS SIMPLES:                                   ║
+    ║    const express = require('express');                      ║
+    ║    const { createProxyMiddleware } = require(              ║
+    ║        'http-proxy-middleware');                            ║
+    ║    app.use('/api', createProxyMiddleware({                  ║
+    ║        target: 'http://seu-servidor:8080',                  ║
+    ║        changeOrigin: true,                                  ║
+    ║        onProxyRes: (res) => {                               ║
+    ║            res.headers['access-control-allow-origin']='*'; ║
+    ║        }                                                    ║
+    ║    }));                                                     ║
+    ║                                                             ║
+    ║ 4. SMART TVs Tizen / webOS:                                 ║
+    ║    Tizen: declare a URL no config.xml como "allowed-uri"   ║
+    ║    webOS: use o Luna Service API para requisições HTTP      ║
+    ║    (ambas as plataformas ignoram CORS em apps empacotados)  ║
+    ╚══════════════════════════════════════════════════════════════╝
+    -->
+
+    <style>
+        /* ── Reset ── */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: Arial, Helvetica, sans-serif;
+            background: #08080e;
+            color: #fff;
+            overflow: hidden;
+            /* Dimensões padrão de TV Full HD */
+            width: 1920px;
+            height: 1080px;
+            position: relative;
+        }
+
+        .hidden { display: none !important; }
+
+        .screen {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+        }
+
+        /* ──────────────────────────────────────────
+           LOADING OVERLAY GLOBAL
+        ────────────────────────────────────────── */
+        #loading-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.82);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+        }
+
+        .loading-box { text-align: center; }
+
+        .spinner {
+            display: inline-block;
+            width: 52px; height: 52px;
+            border: 4px solid rgba(255,255,255,0.1);
+            border-top-color: #00d4ff;
+            border-radius: 50%;
+            animation: spin 0.75s linear infinite;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .loading-label {
+            margin-top: 22px;
+            font-size: 16px;
+            color: rgba(255,255,255,0.5);
+            letter-spacing: 1px;
+        }
+
+        /* ──────────────────────────────────────────
+           TELA 1: LOGIN
+        ────────────────────────────────────────── */
+        #screen-login {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: radial-gradient(ellipse at center, #12123a 0%, #08080e 70%);
+        }
+
+        .login-card {
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 18px;
+            padding: 64px 88px;
+            width: 660px;
+            text-align: center;
+        }
+
+        .brand { font-size: 52px; font-weight: 900; color: #00d4ff; letter-spacing: 6px; }
+        .brand-sub { font-size: 12px; color: rgba(255,255,255,0.3); letter-spacing: 3px; margin-bottom: 52px; margin-top: 6px; }
+
+        .field { margin-bottom: 26px; text-align: left; }
+        .field label {
+            display: block;
+            font-size: 11px;
+            color: rgba(255,255,255,0.4);
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            margin-bottom: 8px;
+        }
+        .field input {
+            width: 100%;
+            padding: 18px 20px;
+            background: rgba(255,255,255,0.07);
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 10px;
+            color: #fff;
+            font-size: 16px;
+            outline: none;
+            transition: border-color 0.2s, background 0.2s;
+        }
+        .field input:focus {
+            border-color: #00d4ff;
+            background: rgba(0,212,255,0.06);
+        }
+
+        .btn-login {
+            width: 100%;
+            padding: 22px;
+            background: linear-gradient(135deg, #00aeff, #0055ff);
+            border: none;
+            border-radius: 10px;
+            color: #fff;
+            font-size: 18px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 14px;
+            letter-spacing: 3px;
+            transition: opacity 0.2s, outline 0.1s;
+        }
+        .btn-login:hover, .btn-login:focus { opacity: 0.83; outline: 3px solid #fff; }
+
+        .login-err { color: #ff5555; font-size: 14px; margin-top: 18px; min-height: 20px; }
+
+        /* ──────────────────────────────────────────
+           TELA 2: DASHBOARD
+        ────────────────────────────────────────── */
+        #screen-dashboard {
+            display: flex;
+            flex-direction: column;
+            background: radial-gradient(ellipse at top left, #151535 0%, #08080e 60%);
+        }
+
+        .dash-header {
+            padding: 38px 80px 28px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid rgba(255,255,255,0.07);
+        }
+
+        .dash-logo { font-size: 26px; font-weight: 900; color: #00d4ff; letter-spacing: 4px; }
+        .dash-user { font-size: 14px; color: rgba(255,255,255,0.4); }
+
+        .dash-cards {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 44px;
+            padding: 40px;
+        }
+
+        .dash-card {
+            width: 380px; height: 270px;
+            border-radius: 18px;
+            border: 2px solid rgba(255,255,255,0.07);
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 22px;
+            transition: transform 0.18s, border-color 0.18s, box-shadow 0.18s;
+            outline: none;
+        }
+        .dash-card:hover, .dash-card:focus {
+            transform: scale(1.05);
+            border-color: #00d4ff;
+            box-shadow: 0 0 48px rgba(0,212,255,0.25);
+        }
+        .card-live   { background: linear-gradient(140deg, #0d1040, #0d2060); }
+        .card-movies { background: linear-gradient(140deg, #0d1040, #3d0a0a); }
+        .card-series { background: linear-gradient(140deg, #0d1040, #0a2d0a); }
+        .card-catchup{ background: linear-gradient(140deg, #0d1040, #2d1a0a); }
+
+        .card-icon { font-size: 68px; line-height: 1; }
+        .card-label { font-size: 22px; font-weight: bold; letter-spacing: 4px; color: rgba(255,255,255,0.9); }
+
+        /* ──────────────────────────────────────────
+           TELA 3: LISTAGEM + LAZY LOADING
+        ────────────────────────────────────────── */
+        #screen-list {
+            display: flex;
+            flex-direction: column;
+            background: #08080e;
+        }
+
+        .list-header {
+            padding: 22px 40px;
+            display: flex;
+            align-items: center;
+            gap: 24px;
+            border-bottom: 1px solid rgba(255,255,255,0.07);
+            background: rgba(255,255,255,0.02);
+            flex-shrink: 0;
+        }
+
+        .btn-back {
+            padding: 12px 28px;
+            background: rgba(255,255,255,0.08);
+            border: 1px solid rgba(255,255,255,0.15);
+            border-radius: 8px;
+            color: #fff;
+            font-size: 15px;
+            cursor: pointer;
+            letter-spacing: 1px;
+            transition: all 0.2s;
+            outline: none;
+        }
+        .btn-back:hover, .btn-back:focus {
+            background: rgba(0,212,255,0.15);
+            border-color: #00d4ff;
+        }
+
+        .list-title { font-size: 22px; font-weight: bold; color: #00d4ff; letter-spacing: 2px; }
+        .list-count { font-size: 13px; color: rgba(255,255,255,0.3); }
+
+        .list-body { flex: 1; display: flex; overflow: hidden; }
+
+        /* Sidebar de categorias */
+        .cat-panel {
+            width: 290px;
+            flex-shrink: 0;
+            overflow-y: auto;
+            border-right: 1px solid rgba(255,255,255,0.07);
+            padding: 14px 0;
+        }
+        .cat-panel::-webkit-scrollbar { width: 3px; }
+        .cat-panel::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 2px; }
+
+        .cat-item {
+            padding: 15px 22px;
+            cursor: pointer;
+            font-size: 14px;
+            color: rgba(255,255,255,0.5);
+            border-left: 3px solid transparent;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            transition: all 0.15s;
+            outline: none;
+        }
+        .cat-item:hover, .cat-item:focus { background: rgba(0,212,255,0.07); color: #fff; border-left-color: #00d4ff; }
+        .cat-item.active { background: rgba(0,212,255,0.11); color: #00d4ff; border-left-color: #00d4ff; font-weight: bold; }
+
+        /* Grade de conteúdo */
+        .grid-wrapper {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px;
+        }
+        .grid-wrapper::-webkit-scrollbar { width: 5px; }
+        .grid-wrapper::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 3px; }
+
+        .content-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+            gap: 18px;
+        }
+
+        .c-item {
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.07);
+            border-radius: 10px;
+            padding: 18px 14px;
+            cursor: pointer;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 12px;
+            transition: all 0.15s;
+            outline: none;
+        }
+        .c-item:hover, .c-item:focus {
+            background: rgba(0,212,255,0.09);
+            border-color: #00d4ff;
+            transform: scale(1.04);
+            box-shadow: 0 4px 22px rgba(0,212,255,0.18);
+        }
+
+        .c-thumb {
+            width: 80px; height: 80px;
+            border-radius: 8px;
+            object-fit: cover;
+        }
+        .c-thumb-ph {
+            width: 80px; height: 80px;
+            border-radius: 8px;
+            background: linear-gradient(140deg, #151535, #0d1b4b);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 34px;
+        }
+        .c-name {
+            font-size: 13px;
+            color: rgba(255,255,255,0.82);
+            line-height: 1.4;
+            word-break: break-word;
+        }
+
+        /* Indicador lazy loading */
+        .lazy-hint {
+            grid-column: 1 / -1;
+            text-align: center;
+            padding: 28px;
+            color: rgba(255,255,255,0.3);
+            font-size: 14px;
+        }
+        .lazy-hint .spinner {
+            width: 22px; height: 22px;
+            border-width: 3px;
+            display: inline-block;
+            vertical-align: middle;
+            margin-right: 10px;
+        }
+
+        /* ──────────────────────────────────────────
+           TELA 4: PLAYER
+        ────────────────────────────────────────── */
+        #screen-player { background: #000; }
+
+        #vid {
+            width: 100%; height: 100%;
+            object-fit: contain;
+            display: block;
+        }
+
+        .player-ui {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+        }
+
+        .btn-player-back {
+            position: absolute;
+            top: 28px; left: 28px;
+            padding: 14px 34px;
+            background: rgba(0,0,0,0.72);
+            border: 1px solid rgba(255,255,255,0.28);
+            border-radius: 8px;
+            color: #fff;
+            font-size: 16px;
+            cursor: pointer;
+            pointer-events: all;
+            letter-spacing: 1px;
+            outline: none;
+            transition: all 0.2s;
+        }
+        .btn-player-back:hover, .btn-player-back:focus {
+            background: rgba(0,212,255,0.28);
+            border-color: #00d4ff;
+        }
+
+        /* Info do canal (canto inferior esquerdo) */
+        .ch-info {
+            position: absolute;
+            bottom: 40px; left: 40px;
+            background: rgba(0,0,0,0.72);
+            border-radius: 10px;
+            padding: 16px 24px;
+        }
+        .ch-name { font-size: 20px; font-weight: bold; }
+        .ch-type { font-size: 12px; color: #00d4ff; margin-top: 5px; letter-spacing: 2px; }
+
+        /* Painel de estatísticas P2P (canto superior direito) */
+        .p2p-panel {
+            position: absolute;
+            top: 28px; right: 28px;
+            background: rgba(0,0,0,0.72);
+            border: 1px solid rgba(0,212,255,0.28);
+            border-radius: 14px;
+            padding: 20px 26px;
+            min-width: 270px;
+        }
+
+        .p2p-title {
+            font-size: 11px;
+            color: #00d4ff;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .p2p-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: #00d4ff;
+            animation: blink 1.4s infinite;
+        }
+        @keyframes blink { 0%,100% { opacity:1; } 50% { opacity:0.25; } }
+
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 11px;
+            font-size: 13px;
+        }
+        .stat-lbl { color: rgba(255,255,255,0.45); }
+        .stat-val { font-weight: bold; font-family: monospace; }
+        .stat-val.accent { color: #00d4ff; }
+
+        .savings-track {
+            height: 5px;
+            background: rgba(255,255,255,0.08);
+            border-radius: 3px;
+            margin-top: 8px;
+            overflow: hidden;
+        }
+        .savings-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #0055ff, #00d4ff);
+            border-radius: 3px;
+            transition: width 0.6s ease;
+            width: 0%;
+        }
+
+        /* ── Busca ── */
+        .search-input {
+            flex: 1;
+            max-width: 340px;
+            padding: 10px 18px;
+            background: rgba(255,255,255,0.07);
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 8px;
+            color: #fff;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        .search-input:focus { border-color: #00d4ff; }
+        .search-input::placeholder { color: rgba(255,255,255,0.3); }
+
+        /* ── Favorito / Recente nos cards ── */
+        .c-item { position: relative; }
+        .fav-btn {
+            position: absolute;
+            top: 6px; right: 6px;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+            line-height: 1;
+            opacity: 0.45;
+            transition: opacity 0.15s, transform 0.15s;
+            padding: 2px 4px;
+        }
+        .fav-btn:hover, .fav-btn.active { opacity: 1; transform: scale(1.2); }
+        .fav-btn.active { color: #ffd700; opacity: 1; }
+        .c-recent-badge {
+            position: absolute;
+            top: 6px; left: 6px;
+            background: #00d4ff;
+            color: #000;
+            font-size: 8px;
+            font-weight: bold;
+            letter-spacing: 1px;
+            padding: 2px 5px;
+            border-radius: 4px;
+        }
+
+        /* ── Modal de detalhes ── */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.84);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 8000;
+        }
+        .modal-box {
+            background: #12122a;
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 18px;
+            width: 860px;
+            max-height: 600px;
+            overflow: hidden;
+            display: flex;
+        }
+        .modal-poster {
+            width: 230px;
+            flex-shrink: 0;
+            object-fit: cover;
+            border-radius: 18px 0 0 18px;
+        }
+        .modal-poster-ph {
+            width: 230px;
+            flex-shrink: 0;
+            background: linear-gradient(140deg, #151535, #0d1b4b);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 80px;
+            border-radius: 18px 0 0 18px;
+        }
+        .modal-info {
+            flex: 1;
+            padding: 36px 40px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .modal-info::-webkit-scrollbar { width: 3px; }
+        .modal-info::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); }
+        .modal-title { font-size: 24px; font-weight: bold; color: #fff; line-height: 1.3; }
+        .modal-meta  { font-size: 12px; color: rgba(255,255,255,0.4); letter-spacing: 1px; }
+        .modal-rating { font-size: 14px; color: #ffd700; }
+        .modal-plot  { font-size: 13px; color: rgba(255,255,255,0.65); line-height: 1.65; }
+        .modal-actions { display: flex; gap: 12px; margin-top: auto; padding-top: 10px; flex-wrap: wrap; }
+        .btn-play-modal {
+            padding: 14px 36px;
+            background: linear-gradient(135deg, #00aeff, #0055ff);
+            border: none; border-radius: 10px;
+            color: #fff; font-size: 15px; font-weight: bold;
+            cursor: pointer; letter-spacing: 2px; transition: opacity 0.2s;
+        }
+        .btn-play-modal:hover { opacity: 0.85; }
+        .btn-modal-fav {
+            padding: 14px 20px;
+            background: rgba(255,255,255,0.07);
+            border: 1px solid rgba(255,255,255,0.15);
+            border-radius: 10px; color: #fff; font-size: 20px;
+            cursor: pointer; transition: all 0.2s;
+        }
+        .btn-modal-fav:hover, .btn-modal-fav.active { border-color: #ffd700; color: #ffd700; }
+        .btn-modal-close {
+            padding: 14px 28px;
+            background: rgba(255,255,255,0.07);
+            border: 1px solid rgba(255,255,255,0.15);
+            border-radius: 10px; color: rgba(255,255,255,0.6);
+            font-size: 14px; cursor: pointer; letter-spacing: 1px; transition: all 0.2s;
+        }
+        .btn-modal-close:hover { background: rgba(255,60,60,0.2); border-color: #ff5555; color: #ff5555; }
+
+        /* ── Modal de configurações ── */
+        .settings-box {
+            background: #12122a;
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 18px;
+            padding: 52px 64px;
+            width: 560px;
+        }
+        .settings-title {
+            font-size: 20px; font-weight: bold;
+            color: #00d4ff; letter-spacing: 3px; margin-bottom: 34px;
+        }
+        .settings-row {
+            display: flex; justify-content: space-between;
+            margin-bottom: 14px; font-size: 14px;
+        }
+        .settings-lbl { color: rgba(255,255,255,0.4); letter-spacing: 1px; }
+        .settings-val { color: #fff; font-family: monospace; max-width: 320px; word-break: break-all; }
+        .settings-actions { display: flex; gap: 14px; margin-top: 36px; }
+        .btn-logout {
+            padding: 14px 32px;
+            background: rgba(255,60,60,0.12);
+            border: 1px solid rgba(255,60,60,0.4);
+            border-radius: 10px; color: #ff5555;
+            font-size: 14px; font-weight: bold;
+            cursor: pointer; letter-spacing: 2px; transition: all 0.2s;
+        }
+        .btn-logout:hover { background: rgba(255,60,60,0.28); }
+        .btn-settings-close {
+            padding: 14px 32px;
+            background: rgba(255,255,255,0.07);
+            border: 1px solid rgba(255,255,255,0.15);
+            border-radius: 10px; color: #fff;
+            font-size: 14px; cursor: pointer; transition: all 0.2s;
+        }
+        .btn-settings-close:hover { background: rgba(255,255,255,0.12); }
+        .btn-settings {
+            padding: 10px 18px;
+            background: rgba(255,255,255,0.06);
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 8px; color: rgba(255,255,255,0.5);
+            font-size: 18px; cursor: pointer; transition: all 0.2s;
+        }
+        .btn-settings:hover { color: #00d4ff; border-color: #00d4ff; }
+    </style>
+</head>
+<body>
+
+<!-- ── LOADING GLOBAL ── -->
+<div id="loading-overlay" class="hidden">
+    <div class="loading-box">
+        <div class="spinner"></div>
+        <div class="loading-label" id="loading-label">Carregando...</div>
+    </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     TELA 1 — LOGIN
+══════════════════════════════════════════ -->
+<div id="screen-login" class="screen">
+    <div class="login-card">
+        <div class="brand">IPTV P2P</div>
+        <div class="brand-sub">POWERED BY WEBRTC MESH</div>
+
+        <div class="field">
+            <label for="f-dns">Servidor (DNS : Porta)</label>
+            <input id="f-dns" type="text" placeholder="http://exemplo.com:8080" autocomplete="off" />
+        </div>
+        <div class="field">
+            <label for="f-user">Usuário</label>
+            <input id="f-user" type="text" placeholder="seu_usuario" autocomplete="off" />
+        </div>
+        <div class="field">
+            <label for="f-pass">Senha</label>
+            <input id="f-pass" type="password" placeholder="••••••••" />
+        </div>
+
+        <button class="btn-login" id="btn-do-login">ENTRAR</button>
+        <div class="login-err" id="login-err"></div>
+    </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     TELA 2 — DASHBOARD
+══════════════════════════════════════════ -->
+<div id="screen-dashboard" class="screen hidden">
+    <div class="dash-header">
+        <div class="dash-logo">IPTV P2P</div>
+        <div style="display:flex;align-items:center;gap:18px;">
+            <div class="dash-user" id="dash-user"></div>
+            <button class="btn-settings" id="btn-settings" title="Configurações">⚙</button>
+        </div>
+    </div>
+    <div class="dash-cards">
+        <div class="dash-card card-live"    tabindex="0" id="card-live">
+            <div class="card-icon">📡</div>
+            <div class="card-label">LIVE TV</div>
+        </div>
+        <div class="dash-card card-movies"  tabindex="0" id="card-movies">
+            <div class="card-icon">🎬</div>
+            <div class="card-label">MOVIES</div>
+        </div>
+        <div class="dash-card card-series"  tabindex="0" id="card-series">
+            <div class="card-icon">📺</div>
+            <div class="card-label">SERIES</div>
+        </div>
+        <div class="dash-card card-catchup" tabindex="0" id="card-catchup">
+            <div class="card-icon">⏮</div>
+            <div class="card-label">CATCHUP</div>
+        </div>
+    </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     TELA 3 — LISTAGEM (LAZY LOADING)
+══════════════════════════════════════════ -->
+<div id="screen-list" class="screen hidden">
+    <div class="list-header">
+        <button class="btn-back" id="btn-back">&#9664; VOLTAR</button>
+        <div class="list-title" id="list-title">LIVE TV</div>
+        <input class="search-input" id="search-input" type="text" placeholder="🔍  Buscar..." autocomplete="off" />
+        <div class="list-count" id="list-count"></div>
+    </div>
+    <div class="list-body">
+        <div class="cat-panel" id="cat-panel"></div>
+        <div class="grid-wrapper" id="grid-wrapper">
+            <div class="content-grid" id="content-grid"></div>
+            <div class="lazy-hint hidden" id="lazy-hint">
+                <span class="spinner"></span> Carregando mais itens...
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     TELA 4 — PLAYER
+══════════════════════════════════════════ -->
+<div id="screen-player" class="screen hidden">
+    <video id="vid" autoplay playsinline></video>
+    <div class="player-ui">
+        <button class="btn-player-back" id="btn-player-back">&#9664; VOLTAR</button>
+
+        <div class="ch-info">
+            <div class="ch-name" id="ch-name">Canal</div>
+            <div class="ch-type" id="ch-type">LIVE</div>
+        </div>
+
+        <div class="p2p-panel">
+            <div class="p2p-title"><div class="p2p-dot"></div> P2P MESH STATS</div>
+            <div class="stat-row">
+                <span class="stat-lbl">Peers Ativos</span>
+                <span class="stat-val accent" id="s-peers">0</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-lbl">Download HTTP</span>
+                <span class="stat-val" id="s-http">0 KB/s</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-lbl">Download P2P</span>
+                <span class="stat-val accent" id="s-p2p">0 KB/s</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-lbl">Economia P2P</span>
+                <span class="stat-val accent" id="s-save">0%</span>
+            </div>
+            <div class="savings-track">
+                <div class="savings-fill" id="savings-fill"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     MODAL — DETALHES (Filmes / Séries)
+══════════════════════════════════════════ -->
+<div id="modal-details" class="modal-overlay hidden">
+    <div class="modal-box">
+        <div id="modal-poster-wrap"></div>
+        <div class="modal-info">
+            <div class="modal-title"  id="modal-title"></div>
+            <div class="modal-meta"   id="modal-meta"></div>
+            <div class="modal-rating" id="modal-rating"></div>
+            <div class="modal-plot"   id="modal-plot"></div>
+            <div class="modal-actions">
+                <button class="btn-play-modal"  id="btn-modal-play">&#9654; ASSISTIR</button>
+                <button class="btn-modal-fav"   id="btn-modal-fav">&#9734;</button>
+                <button class="btn-modal-close" id="btn-modal-close">FECHAR</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     MODAL — CONFIGURAÇÕES
+══════════════════════════════════════════ -->
+<div id="modal-settings" class="modal-overlay hidden">
+    <div class="settings-box">
+        <div class="settings-title">&#9881; CONFIGURAÇÕES</div>
+        <div>
+            <div class="settings-row">
+                <span class="settings-lbl">SERVIDOR</span>
+                <span class="settings-val" id="cfg-dns">—</span>
+            </div>
+            <div class="settings-row">
+                <span class="settings-lbl">USUÁRIO</span>
+                <span class="settings-val" id="cfg-user">—</span>
+            </div>
+            <div class="settings-row">
+                <span class="settings-lbl">STATUS</span>
+                <span class="settings-val" id="cfg-status">—</span>
+            </div>
+            <div class="settings-row">
+                <span class="settings-lbl">EXPIRA</span>
+                <span class="settings-val" id="cfg-exp">—</span>
+            </div>
+            <div class="settings-row">
+                <span class="settings-lbl">FAVORITOS</span>
+                <span class="settings-val" id="cfg-favs">0</span>
+            </div>
+        </div>
+        <div class="settings-actions">
+            <button class="btn-logout"        id="btn-logout">SAIR DA CONTA</button>
+            <button class="btn-settings-close" id="btn-settings-close">FECHAR</button>
+        </div>
+    </div>
+</div>
+
+<!--
+    hls.js  →  reprodução HLS
+    p2p-media-loader-hlsjs  →  intercepção P2P dos segmentos HLS via WebRTC
+    Se for usar sem acesso à internet, baixe os arquivos e aponte para o caminho local.
+-->
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.7/dist/hls.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/p2p-media-loader-hlsjs@2.1.0/build/p2p-media-loader-hlsjs.min.js"></script>
+
+<script>
+// ════════════════════════════════════════════════════════════════
+//  ESTADO GLOBAL
+// ════════════════════════════════════════════════════════════════
+var S = {
+    dns: '', user: '', pass: '',
+    userInfo: null,
+
+    // Navegação
+    mode: '',          // 'live' | 'movies' | 'series' | 'series-ep' | 'catchup'
+    activeCat: '',
+
+    // Dados em memória (lista COMPLETA nunca é truncada)
+    allCategories: [],
+    allItems: [],
+    filtered: [],
+
+    // Lazy loading
+    offset: 0,
+    batchSize: 50,
+    rendering: false,
+
+    // Player / P2P
+    hls: null,
+    p2p: null,
+    sigWs: null,
+    statsTimer: null,
+    httpBytes: 0,
+    p2pBytes: 0
+};
+
+// URL do tracker WebRTC — detecta automaticamente se está em HTTPS (Render) ou HTTP (local)
+var TRACKER_WS = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
+
+// ════════════════════════════════════════════════════════════════
+//  HELPERS
+// ════════════════════════════════════════════════════════════════
+function showScreen(id) {
+    var ids = ['screen-login', 'screen-dashboard', 'screen-list', 'screen-player'];
+    for (var i = 0; i < ids.length; i++) {
+        var el = document.getElementById(ids[i]);
+        if (el) {
+            if (ids[i] === id) {
+                el.classList.remove('hidden');
+            } else {
+                el.classList.add('hidden');
+            }
+        }
+    }
+}
+
+function showLoading(msg) {
+    var ov = document.getElementById('loading-overlay');
+    var lb = document.getElementById('loading-label');
+    if (ov) ov.classList.remove('hidden');
+    if (lb) lb.textContent = msg || 'Carregando...';
+}
+
+function hideLoading() {
+    var ov = document.getElementById('loading-overlay');
+    if (ov) ov.classList.add('hidden');
+}
+
+function esc(s) {
+    if (!s) return '';
+    return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+function fmtBytes(b) {
+    if (b < 1024)    return b + ' B/s';
+    if (b < 1048576) return (b / 1024).toFixed(1) + ' KB/s';
+    return (b / 1048576).toFixed(1) + ' MB/s';
+}
+
+// Fetch com timeout manual (compatível com ES6 básico)
+function fetchJSON(url, timeoutMs) {
+    timeoutMs = timeoutMs || 15000;
+    return new Promise(function(resolve, reject) {
+        var done = false;
+        var timer = setTimeout(function() {
+            if (!done) { done = true; reject(new Error('Timeout na conexão')); }
+        }, timeoutMs);
+
+        fetch(url)
+            .then(function(res) {
+                clearTimeout(timer);
+                if (!done) { done = true; return res.json(); }
+            })
+            .then(function(json) { if (json !== undefined) resolve(json); })
+            .catch(function(err) {
+                clearTimeout(timer);
+                if (!done) { done = true; reject(err); }
+            });
+    });
+}
+
+// ════════════════════════════════════════════════════════════════
+//  TELA 1: LOGIN
+// ════════════════════════════════════════════════════════════════
+function doLogin() {
+    var dns  = (document.getElementById('f-dns').value  || '').trim();
+    var user = (document.getElementById('f-user').value || '').trim();
+    var pass = (document.getElementById('f-pass').value || '').trim();
+    var errEl = document.getElementById('login-err');
+
+    errEl.textContent = '';
+
+    if (!dns || !user || !pass) {
+        errEl.textContent = 'Preencha todos os campos.';
+        return;
+    }
+
+    // Remove barra final
+    while (dns.length && dns[dns.length - 1] === '/') {
+        dns = dns.slice(0, -1);
+    }
+
+    S.dns  = dns;
+    S.user = user;
+    S.pass = pass;
+
+    var url = dns + '/player_api.php?username=' + encodeURIComponent(user) +
+              '&password=' + encodeURIComponent(pass);
+
+    showLoading('Autenticando...');
+
+    fetchJSON(url)
+        .then(function(data) {
+            hideLoading();
+
+            var auth = data && data.user_info && data.user_info.auth;
+            if (!auth || auth === 0 || auth === '0') {
+                errEl.textContent = 'Credenciais inválidas.';
+                return;
+            }
+
+            S.userInfo = data.user_info;
+
+            var expTs = parseInt(data.user_info.exp_date || '0', 10);
+            var expStr = expTs ? new Date(expTs * 1000).toLocaleDateString('pt-BR') : 'N/A';
+            var dashUser = document.getElementById('dash-user');
+            if (dashUser) {
+                dashUser.textContent = 'Olá, ' + data.user_info.username + '   •   Expira: ' + expStr;
+            }
+
+            showScreen('screen-dashboard');
+        })
+        .catch(function(err) {
+            hideLoading();
+            errEl.textContent = 'Erro de conexão: ' + err.message;
+        });
+}
+
+// ════════════════════════════════════════════════════════════════
+//  TELA 2: DASHBOARD → NAVEGAÇÃO
+// ════════════════════════════════════════════════════════════════
+var CAT_ACTIONS = {
+    'live':    'get_live_categories',
+    'movies':  'get_vod_categories',
+    'series':  'get_series_categories',
+    'catchup': 'get_live_categories'
+};
+
+var ITEM_ACTIONS = {
+    'live':    'get_live_streams',
+    'movies':  'get_vod_streams',
+    'series':  'get_series',
+    'catchup': 'get_live_streams'
+};
+
+var MODE_LABELS = {
+    'live': 'LIVE TV', 'movies': 'FILMES', 'series': 'SÉRIES', 'catchup': 'CATCHUP'
+};
+
+var MODE_ICONS = {
+    'live': '📡', 'movies': '🎬', 'series': '📺', 'catchup': '⏮', 'series-ep': '▶'
+};
+
+function navigateTo(mode) {
+    S.mode = mode;
+    S.activeCat = '';
+    S.allCategories = [];
+    S.allItems = [];
+    S.filtered = [];
+    S.offset = 0;
+    S.rendering = false;
+
+    var titleEl = document.getElementById('list-title');
+    var countEl = document.getElementById('list-count');
+    if (titleEl) titleEl.textContent = MODE_LABELS[mode] || mode.toUpperCase();
+    if (countEl) countEl.textContent = 'Carregando...';
+
+    var si = document.getElementById('search-input');
+    if (si) si.value = '';
+
+    showScreen('screen-list');
+    showLoading('Buscando ' + (MODE_LABELS[mode] || mode) + '...');
+
+    var base = S.dns + '/player_api.php?username=' + encodeURIComponent(S.user) +
+               '&password=' + encodeURIComponent(S.pass);
+
+    var catUrl  = base + '&action=' + CAT_ACTIONS[mode];
+    var itemUrl = base + '&action=' + ITEM_ACTIONS[mode];
+
+    Promise.all([fetchJSON(catUrl), fetchJSON(itemUrl, 30000)])
+        .then(function(results) {
+            hideLoading();
+
+            var cats  = Array.isArray(results[0]) ? results[0] : [];
+            var items = Array.isArray(results[1]) ? results[1] : [];
+
+            S.allCategories = cats;
+            S.allItems      = items;
+            S.filtered      = items.slice();
+
+            if (countEl) countEl.textContent = items.length + ' itens';
+
+            renderCategories(cats);
+
+            var grid = document.getElementById('content-grid');
+            if (grid) grid.innerHTML = '';
+
+            var wrapper = document.getElementById('grid-wrapper');
+            if (wrapper) wrapper.scrollTop = 0;
+
+            loadBatch();
+        })
+        .catch(function(err) {
+            hideLoading();
+            if (countEl) countEl.textContent = 'Erro';
+            var grid = document.getElementById('content-grid');
+            if (grid) {
+                grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:80px;color:rgba(255,255,255,0.35)">Erro: ' + esc(err.message) + '</div>';
+            }
+        });
+
+    // Scroll infinito → Lazy Loading
+    var wrapper = document.getElementById('grid-wrapper');
+    if (wrapper) {
+        wrapper.onscroll = function() {
+            var remaining = wrapper.scrollHeight - wrapper.scrollTop - wrapper.clientHeight;
+            if (remaining < 320 && !S.rendering) {
+                loadBatch();
+            }
+        };
+    }
+}
+
+// ════════════════════════════════════════════════════════════════
+//  LAZY LOADING — Renderização em lotes de 50
+// ════════════════════════════════════════════════════════════════
+function loadBatch() {
+    if (S.rendering) return;
+    if (S.offset >= S.filtered.length) return;
+
+    S.rendering = true;
+
+    var hint = document.getElementById('lazy-hint');
+    if (hint) hint.classList.remove('hidden');
+
+    // setTimeout de 40ms desbloqueia a thread de UI antes de inserir os nós
+    setTimeout(function() {
+        var grid = document.getElementById('content-grid');
+        if (!grid) { S.rendering = false; return; }
+
+        var end  = Math.min(S.offset + S.batchSize, S.filtered.length);
+        var frag = document.createDocumentFragment();
+
+        for (var i = S.offset; i < end; i++) {
+            frag.appendChild(makeCard(S.filtered[i]));
+        }
+
+        grid.appendChild(frag);
+        S.offset    = end;
+        S.rendering = false;
+
+        if (hint) hint.classList.add('hidden');
+    }, 40);
+}
+
+function makeCard(item) {
+    var div = document.createElement('div');
+    div.className = 'c-item';
+    div.setAttribute('tabindex', '0');
+
+    var logo = item.stream_icon || item.cover || item.cover_big || '';
+    var name = esc(item.name || item.title || 'Sem nome');
+    var icon = MODE_ICONS[S.mode] || '▶';
+    var itemId = String(item.stream_id || item.series_id || item.id);
+
+    var thumbHtml;
+    if (logo) {
+        thumbHtml = '<img class="c-thumb" src="' + esc(logo) + '" alt="" onerror="this.style.display=\'none\'" />';
+    } else {
+        thumbHtml = '<div class="c-thumb-ph">' + icon + '</div>';
+    }
+
+    var recentIds = RECENTS.ids();
+    var recentBadge = recentIds.indexOf(itemId) !== -1 ? '<div class="c-recent-badge">VISTO</div>' : '';
+    var favStar = FAVS.has(itemId) ? '★' : '☆';
+    var favActive = FAVS.has(itemId) ? ' active' : '';
+
+    div.innerHTML = recentBadge +
+        '<button class="fav-btn' + favActive + '" data-id="' + itemId + '">' + favStar + '</button>' +
+        thumbHtml +
+        '<div class="c-name">' + name + '</div>';
+
+    // Fav button — stop propagation so não abre o item
+    var favBtn = div.querySelector('.fav-btn');
+    favBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var added = FAVS.toggle(item);
+        favBtn.textContent = added ? '★' : '☆';
+        if (added) favBtn.classList.add('active'); else favBtn.classList.remove('active');
+    });
+
+    var onActivate = function() {
+        if (S.mode === 'movies' || S.mode === 'series') {
+            showDetails(item);
+        } else {
+            playItem(item);
+        }
+    };
+
+    div.onclick = onActivate;
+    div.onkeydown = function(e) {
+        var k = e.keyCode || e.which;
+        if (k === 13 || k === 32) { e.preventDefault(); onActivate(); }
+    };
+
+    return div;
+}
+
+// ════════════════════════════════════════════════════════════════
+//  CATEGORIAS
+// ════════════════════════════════════════════════════════════════
+function renderCategories(cats) {
+    var panel = document.getElementById('cat-panel');
+    if (!panel) return;
+    panel.innerHTML = '';
+
+    function makeItem(label, catId, isFirst) {
+        var div = document.createElement('div');
+        div.className = 'cat-item' + (isFirst ? ' active' : '');
+        div.setAttribute('tabindex', '0');
+        div.textContent = label;
+        div.onclick = function() { selectCat(catId, div); };
+        div.onkeydown = function(e) {
+            var k = e.keyCode || e.which;
+            if (k === 13) { e.preventDefault(); selectCat(catId, div); }
+        };
+        return div;
+    }
+
+    panel.appendChild(makeItem('Todos (' + S.allItems.length + ')', '', true));
+
+    var favCount = FAVS.count();
+    if (favCount > 0) panel.appendChild(makeItem('★ Favoritos (' + favCount + ')', '__favs__', false));
+
+    var recCount = RECENTS.list().length;
+    if (recCount > 0) panel.appendChild(makeItem('⏱ Recentes (' + recCount + ')', '__recents__', false));
+
+    for (var i = 0; i < cats.length; i++) {
+        var c = cats[i];
+        panel.appendChild(makeItem(c.category_name || ('Cat ' + i), String(c.category_id || ''), false));
+    }
+}
+
+function selectCat(catId, el) {
+    S.activeCat = catId;
+
+    var all = document.querySelectorAll('.cat-item');
+    for (var i = 0; i < all.length; i++) all[i].classList.remove('active');
+    if (el) el.classList.add('active');
+
+    if (!catId) {
+        S.filtered = S.allItems.slice();
+    } else if (catId === '__favs__') {
+        S.filtered = FAVS.list();
+    } else if (catId === '__recents__') {
+        S.filtered = RECENTS.list();
+    } else {
+        S.filtered = [];
+        for (var j = 0; j < S.allItems.length; j++) {
+            if (String(S.allItems[j].category_id) === catId) {
+                S.filtered.push(S.allItems[j]);
+            }
+        }
+    }
+
+    var countEl = document.getElementById('list-count');
+    if (countEl) countEl.textContent = S.filtered.length + ' itens';
+
+    S.offset    = 0;
+    S.rendering = false;
+
+    var grid = document.getElementById('content-grid');
+    if (grid) grid.innerHTML = '';
+
+    var wrapper = document.getElementById('grid-wrapper');
+    if (wrapper) wrapper.scrollTop = 0;
+
+    loadBatch();
+}
+
+// ════════════════════════════════════════════════════════════════
+//  TELA 4: PLAYER
+// ════════════════════════════════════════════════════════════════
+function playItem(item) {
+    RECENTS.add(item);
+    var mode = S.mode;
+    var name = item.name || item.title || 'Sem nome';
+    var sid, url;
+
+    if (mode === 'series-ep') {
+        url = S.dns + '/series/' + encodeURIComponent(S.user) + '/' + encodeURIComponent(S.pass) +
+              '/' + item.stream_id + '.' + (item._ext || 'mp4');
+        startPlayer(url, item.stream_id, name, 'SÉRIE');
+        return;
+    }
+
+    if (mode === 'series') {
+        loadEpisodes(item);
+        return;
+    }
+
+    sid = item.stream_id || item.id || '';
+
+    if (mode === 'movies') {
+        url = S.dns + '/movie/' + encodeURIComponent(S.user) + '/' + encodeURIComponent(S.pass) +
+              '/' + sid + '.m3u8';
+    } else {
+        // live / catchup
+        url = S.dns + '/live/' + encodeURIComponent(S.user) + '/' + encodeURIComponent(S.pass) +
+              '/' + sid + '.m3u8';
+    }
+
+    startPlayer(url, sid, name, MODE_LABELS[mode] || mode.toUpperCase());
+}
+
+function loadEpisodes(series) {
+    var sid = series.series_id || series.id || '';
+    var url = S.dns + '/player_api.php?username=' + encodeURIComponent(S.user) +
+              '&password=' + encodeURIComponent(S.pass) +
+              '&action=get_series_info&series_id=' + sid;
+
+    showLoading('Carregando episódios...');
+
+    fetchJSON(url)
+        .then(function(data) {
+            hideLoading();
+            if (!data || !data.episodes) return;
+
+            var eps = [];
+            var seasons = Object.keys(data.episodes);
+            for (var s = 0; s < seasons.length; s++) {
+                var arr = data.episodes[seasons[s]];
+                if (Array.isArray(arr)) {
+                    for (var e = 0; e < arr.length; e++) {
+                        eps.push({
+                            name:      'T' + seasons[s] + ' E' + (arr[e].episode_num || arr[e].id) + ' — ' + (arr[e].title || ''),
+                            stream_id: arr[e].id,
+                            _ext:      arr[e].container_extension || 'mp4'
+                        });
+                    }
+                }
+            }
+
+            S.mode     = 'series-ep';
+            S.filtered = eps;
+            S.offset   = 0;
+            S.rendering = false;
+
+            var grid = document.getElementById('content-grid');
+            if (grid) grid.innerHTML = '';
+
+            var wrapper = document.getElementById('grid-wrapper');
+            if (wrapper) wrapper.scrollTop = 0;
+
+            loadBatch();
+        })
+        .catch(function(err) {
+            hideLoading();
+            console.error('Erro ao carregar episódios:', err);
+        });
+}
+
+function startPlayer(streamUrl, streamId, name, typeLabel) {
+    showScreen('screen-player');
+
+    var chName = document.getElementById('ch-name');
+    var chType = document.getElementById('ch-type');
+    if (chName) chName.textContent = name;
+    if (chType) chType.textContent = typeLabel;
+
+    S.httpBytes = 0;
+    S.p2pBytes  = 0;
+    setStats(0, 0, 0, 0);
+
+    destroyPlayer(true);
+
+    var vid = document.getElementById('vid');
+
+    if (!Hls.isSupported()) {
+        // Fallback nativo (Safari, webOS com suporte HLS nativo)
+        vid.src = streamUrl;
+        vid.play();
+        return;
+    }
+
+    var hlsCfg = {};
+
+    // Integra P2P Media Loader se disponível
+    if (typeof HlsJsP2PEngine !== 'undefined') {
+        try {
+            var eng = new HlsJsP2PEngine({
+                trackerAnnounce: [TRACKER_WS],
+                swarmId: 'iptv-' + String(streamId),
+                segments: {
+                    swarmId:                 'iptv-' + String(streamId),
+                    cachedSegmentExpiration: 300000,
+                    cachedSegmentsCount:     30,
+                    requiredSegmentCount:    2,
+                    forwardSegmentCount:     20
+                },
+                onPieceBytesDownloaded: function(method, size) {
+                    if (method === 'http') { S.httpBytes += size; }
+                    else if (method === 'p2p') { S.p2pBytes += size; }
+                }
+            });
+            S.p2p  = eng;
+            hlsCfg = eng.getHlsConfig();
+        } catch (ex) {
+            console.warn('P2P Engine falhou ao iniciar, usando HLS puro:', ex);
+        }
+    }
+
+    var hls = new Hls(hlsCfg);
+    S.hls = hls;
+
+    hls.loadSource(streamUrl);
+    hls.attachMedia(vid);
+
+    hls.on(Hls.Events.MANIFEST_PARSED, function() {
+        vid.play().catch(function() {});
+    });
+
+    hls.on(Hls.Events.ERROR, function(ev, d) {
+        if (d.fatal) { console.error('HLS fatal error:', d.type, d.details); }
+    });
+
+    connectSignaling(streamId);
+    startStatsLoop();
+}
+
+function destroyPlayer(keepScreen) {
+    if (S.statsTimer) { clearInterval(S.statsTimer); S.statsTimer = null; }
+
+    if (S.hls) {
+        try { S.hls.destroy(); } catch (e) {}
+        S.hls = null;
+    }
+    if (S.p2p) {
+        try { S.p2p.destroy(); } catch (e) {}
+        S.p2p = null;
+    }
+    if (S.sigWs) {
+        try { S.sigWs.close(); } catch (e) {}
+        S.sigWs = null;
+    }
+
+    var vid = document.getElementById('vid');
+    if (vid) { vid.pause(); vid.src = ''; }
+
+    if (!keepScreen) { showScreen('screen-list'); }
+}
+
+function startStatsLoop() {
+    var lastHttp = 0, lastP2p = 0;
+
+    if (S.statsTimer) clearInterval(S.statsTimer);
+
+    S.statsTimer = setInterval(function() {
+        var httpSpd = S.httpBytes - lastHttp;
+        var p2pSpd  = S.p2pBytes  - lastP2p;
+        lastHttp = S.httpBytes;
+        lastP2p  = S.p2pBytes;
+
+        var peers = 0;
+        if (S.p2p && S.p2p.getConnectedPeersCount) {
+            try { peers = S.p2p.getConnectedPeersCount() || 0; } catch (e) {}
+        }
+
+        var total  = httpSpd + p2pSpd;
+        var savPct = total > 0 ? Math.round((p2pSpd / total) * 100) : 0;
+
+        setStats(peers, httpSpd, p2pSpd, savPct);
+    }, 1000);
+}
+
+function setStats(peers, http, p2p, pct) {
+    var el;
+    el = document.getElementById('s-peers'); if (el) el.textContent = peers;
+    el = document.getElementById('s-http');  if (el) el.textContent = fmtBytes(http);
+    el = document.getElementById('s-p2p');   if (el) el.textContent = fmtBytes(p2p);
+    el = document.getElementById('s-save');  if (el) el.textContent = pct + '%';
+    el = document.getElementById('savings-fill');
+    if (el) el.style.width = Math.min(pct, 100) + '%';
+}
+
+// ════════════════════════════════════════════════════════════════
+//  SINALIZAÇÃO WebRTC (conecta ao server.js)
+// ════════════════════════════════════════════════════════════════
+function connectSignaling(streamId) {
+    if (S.sigWs) { try { S.sigWs.close(); } catch (e) {} }
+
+    try {
+        var ws = new WebSocket(TRACKER_WS);
+        S.sigWs = ws;
+
+        ws.onopen = function() {
+            ws.send(JSON.stringify({ type: 'join', streamId: String(streamId) }));
+        };
+
+        ws.onmessage = function(ev) {
+            var d;
+            try { d = JSON.parse(ev.data); } catch (e) { return; }
+            // Atualiza contagem de peers via mensagem do tracker
+            if (d.type === 'peer-count') {
+                var el = document.getElementById('s-peers');
+                if (el) el.textContent = d.count || 0;
+            }
+        };
+
+        ws.onerror = function() {
+            console.info('Tracker offline — P2P via sinalização desativado.');
+        };
+    } catch (e) {
+        console.info('WebSocket indisponível:', e);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════
+//  NAVEGAÇÃO GERAL
+// ════════════════════════════════════════════════════════════════
+function goBack() {
+    if (S.mode === 'series-ep') {
+        // Volta para a lista de séries
+        S.mode      = 'series';
+        S.filtered  = S.allItems.slice();
+        S.offset    = 0;
+        S.rendering = false;
+        var grid = document.getElementById('content-grid');
+        if (grid) grid.innerHTML = '';
+        loadBatch();
+    } else {
+        showScreen('screen-dashboard');
+    }
+}
+
+// ════════════════════════════════════════════════════════════════
+//  NAVEGAÇÃO POR TECLA (Controle Remoto)
+// ════════════════════════════════════════════════════════════════
+document.addEventListener('keydown', function(e) {
+    var k = e.keyCode || e.which;
+
+    // Tecla BACK: Tizen=10009, webOS=461, padrão=8 (Backspace)
+    var isBack = (k === 10009 || k === 461 || k === 8);
+    if (!isBack) return;
+
+    var player = document.getElementById('screen-player');
+    var list   = document.getElementById('screen-list');
+
+    if (player && !player.classList.contains('hidden')) {
+        e.preventDefault();
+        destroyPlayer(false);
+        return;
+    }
+    if (list && !list.classList.contains('hidden')) {
+        e.preventDefault();
+        goBack();
+        return;
+    }
+});
+
+// ════════════════════════════════════════════════════════════════
+//  FAVORITOS (localStorage)
+// ════════════════════════════════════════════════════════════════
+var FAVS = {
+    _key: 'iptv_favs',
+    _d: null,
+    _load: function() {
+        if (!this._d) { try { this._d = JSON.parse(localStorage.getItem(this._key)) || {}; } catch(e) { this._d = {}; } }
+        return this._d;
+    },
+    _save: function() { try { localStorage.setItem(this._key, JSON.stringify(this._d)); } catch(e) {} },
+    has: function(id) { return !!this._load()[String(id)]; },
+    add: function(item) { this._load()[String(item.stream_id || item.series_id || item.id)] = item; this._save(); },
+    remove: function(id) { delete this._load()[String(id)]; this._save(); },
+    toggle: function(item) {
+        var id = String(item.stream_id || item.series_id || item.id);
+        if (this.has(id)) { this.remove(id); return false; }
+        this.add(item); return true;
+    },
+    list: function() { var d = this._load(); return Object.keys(d).map(function(k){ return d[k]; }); },
+    count: function() { return Object.keys(this._load()).length; }
+};
+
+// ════════════════════════════════════════════════════════════════
+//  RECENTES (localStorage)
+// ════════════════════════════════════════════════════════════════
+var RECENTS = {
+    _key: 'iptv_recents',
+    _max: 20,
+    add: function(item) {
+        var arr; try { arr = JSON.parse(localStorage.getItem(this._key)) || []; } catch(e) { arr = []; }
+        var id = String(item.stream_id || item.series_id || item.id);
+        arr = arr.filter(function(x) { return String(x.stream_id || x.series_id || x.id) !== id; });
+        arr.unshift(item);
+        if (arr.length > this._max) arr = arr.slice(0, this._max);
+        try { localStorage.setItem(this._key, JSON.stringify(arr)); } catch(e) {}
+    },
+    list: function() { try { return JSON.parse(localStorage.getItem(this._key)) || []; } catch(e) { return []; } },
+    ids: function() { return this.list().map(function(x){ return String(x.stream_id || x.series_id || x.id); }); }
+};
+
+// ════════════════════════════════════════════════════════════════
+//  BUSCA / FILTRO POR TEXTO
+// ════════════════════════════════════════════════════════════════
+function filterSearch(text) {
+    var q = text.toLowerCase().trim();
+    var src;
+
+    if (S.activeCat === '__favs__') {
+        src = FAVS.list();
+    } else if (S.activeCat === '__recents__') {
+        src = RECENTS.list();
+    } else if (S.activeCat) {
+        src = S.allItems.filter(function(x) { return String(x.category_id) === S.activeCat; });
+    } else {
+        src = S.allItems.slice();
+    }
+
+    S.filtered = q ? src.filter(function(x) { return (x.name || x.title || '').toLowerCase().indexOf(q) !== -1; }) : src.slice();
+
+    var countEl = document.getElementById('list-count');
+    if (countEl) countEl.textContent = S.filtered.length + ' itens';
+
+    S.offset = 0; S.rendering = false;
+    var grid = document.getElementById('content-grid');
+    if (grid) grid.innerHTML = '';
+    var wrapper = document.getElementById('grid-wrapper');
+    if (wrapper) wrapper.scrollTop = 0;
+    loadBatch();
+}
+
+// ════════════════════════════════════════════════════════════════
+//  MODAL DE DETALHES
+// ════════════════════════════════════════════════════════════════
+var _detailItem = null;
+
+function showDetails(item) {
+    _detailItem = item;
+    var name   = item.name || item.title || 'Sem nome';
+    var cover  = item.cover_big || item.cover || item.stream_icon || '';
+    var plot   = item.plot || item.description || '';
+    var year   = item.releaseDate || item.release_date || item.year || '';
+    var rating = item.rating || item.rating_5based || '';
+    var genre  = item.genre || item.category_name || '';
+
+    var pw = document.getElementById('modal-poster-wrap');
+    if (cover) {
+        pw.innerHTML = '<img class="modal-poster" src="' + esc(cover) + '" alt="" onerror="this.parentNode.innerHTML=\'<div class=\\\"modal-poster-ph\\\">🎬</div>\'" />';
+    } else {
+        pw.innerHTML = '<div class="modal-poster-ph">' + (S.mode === 'series' ? '📺' : '🎬') + '</div>';
+    }
+
+    document.getElementById('modal-title').textContent = name;
+
+    var meta = [];
+    if (year) meta.push(year);
+    if (genre) meta.push(genre);
+    document.getElementById('modal-meta').textContent = meta.join('  •  ');
+
+    var re = document.getElementById('modal-rating');
+    if (rating) { re.textContent = '★ ' + parseFloat(rating).toFixed(1); re.style.display = ''; }
+    else { re.style.display = 'none'; }
+
+    document.getElementById('modal-plot').textContent = plot;
+
+    var id = String(item.stream_id || item.series_id || item.id);
+    var fb = document.getElementById('btn-modal-fav');
+    if (FAVS.has(id)) { fb.textContent = '★'; fb.classList.add('active'); }
+    else              { fb.textContent = '☆'; fb.classList.remove('active'); }
+
+    document.getElementById('modal-details').classList.remove('hidden');
+}
+
+function closeDetails() {
+    document.getElementById('modal-details').classList.add('hidden');
+    _detailItem = null;
+}
+
+// ════════════════════════════════════════════════════════════════
+//  CONFIGURAÇÕES
+// ════════════════════════════════════════════════════════════════
+function openSettings() {
+    document.getElementById('cfg-dns').textContent  = S.dns  || '—';
+    document.getElementById('cfg-user').textContent = S.user || '—';
+    document.getElementById('cfg-favs').textContent = FAVS.count();
+    var ui = S.userInfo || {};
+    document.getElementById('cfg-status').textContent = ui.status || '—';
+    var exp = parseInt(ui.exp_date || '0', 10);
+    document.getElementById('cfg-exp').textContent = exp ? new Date(exp * 1000).toLocaleDateString('pt-BR') : '—';
+    document.getElementById('modal-settings').classList.remove('hidden');
+}
+
+function closeSettings() {
+    document.getElementById('modal-settings').classList.add('hidden');
+}
+
+function logout() {
+    S.dns = ''; S.user = ''; S.pass = ''; S.userInfo = null;
+    closeSettings();
+    destroyPlayer(false);
+    showScreen('screen-login');
+}
+
+// ════════════════════════════════════════════════════════════════
+//  BOOTSTRAP
+// ════════════════════════════════════════════════════════════════
+document.addEventListener('DOMContentLoaded', function() {
+    // Login por Enter
+    var loginInputs = ['f-dns', 'f-user', 'f-pass'];
+    for (var i = 0; i < loginInputs.length; i++) {
+        var inp = document.getElementById(loginInputs[i]);
+        if (inp) {
+            inp.addEventListener('keydown', function(e) {
+                if ((e.keyCode || e.which) === 13) doLogin();
+            });
+        }
+    }
+
+    // Botão de login
+    var btnLogin = document.getElementById('btn-do-login');
+    if (btnLogin) btnLogin.addEventListener('click', doLogin);
+
+    // Dashboard cards
+    var cardMap = {
+        'card-live':    'live',
+        'card-movies':  'movies',
+        'card-series':  'series',
+        'card-catchup': 'catchup'
+    };
+    var cardIds = Object.keys(cardMap);
+    for (var c = 0; c < cardIds.length; c++) {
+        (function(cid) {
+            var el = document.getElementById(cid);
+            if (!el) return;
+            el.addEventListener('click', function() { navigateTo(cardMap[cid]); });
+            el.addEventListener('keydown', function(e) {
+                if ((e.keyCode || e.which) === 13) navigateTo(cardMap[cid]);
+            });
+        })(cardIds[c]);
+    }
+
+    // Botão VOLTAR da listagem
+    var btnBack = document.getElementById('btn-back');
+    if (btnBack) btnBack.addEventListener('click', goBack);
+
+    // Botão VOLTAR do player
+    var btnPBack = document.getElementById('btn-player-back');
+    if (btnPBack) btnPBack.addEventListener('click', function() { destroyPlayer(false); });
+
+    // Busca
+    var searchEl = document.getElementById('search-input');
+    if (searchEl) {
+        searchEl.addEventListener('input', function() { filterSearch(this.value); });
+        searchEl.addEventListener('keydown', function(e) {
+            if ((e.keyCode || e.which) === 27) { this.value = ''; filterSearch(''); }
+        });
+    }
+
+    // Botão configurações
+    var btnCfg = document.getElementById('btn-settings');
+    if (btnCfg) btnCfg.addEventListener('click', openSettings);
+
+    // Modal configurações
+    var btnCfgClose = document.getElementById('btn-settings-close');
+    if (btnCfgClose) btnCfgClose.addEventListener('click', closeSettings);
+    var btnLogout = document.getElementById('btn-logout');
+    if (btnLogout) btnLogout.addEventListener('click', logout);
+    var modalSettings = document.getElementById('modal-settings');
+    if (modalSettings) modalSettings.addEventListener('click', function(e) {
+        if (e.target === modalSettings) closeSettings();
+    });
+
+    // Modal detalhes
+    var btnModalClose = document.getElementById('btn-modal-close');
+    if (btnModalClose) btnModalClose.addEventListener('click', closeDetails);
+
+    var btnModalPlay = document.getElementById('btn-modal-play');
+    if (btnModalPlay) btnModalPlay.addEventListener('click', function() {
+        if (_detailItem) { closeDetails(); playItem(_detailItem); }
+    });
+
+    var btnModalFav = document.getElementById('btn-modal-fav');
+    if (btnModalFav) btnModalFav.addEventListener('click', function() {
+        if (!_detailItem) return;
+        var added = FAVS.toggle(_detailItem);
+        btnModalFav.textContent = added ? '★' : '☆';
+        if (added) btnModalFav.classList.add('active'); else btnModalFav.classList.remove('active');
+    });
+
+    var modalDetails = document.getElementById('modal-details');
+    if (modalDetails) modalDetails.addEventListener('click', function(e) {
+        if (e.target === modalDetails) closeDetails();
+    });
+
+    // ESC fecha modais
+    document.addEventListener('keydown', function(e) {
+        if ((e.keyCode || e.which) === 27) {
+            closeDetails();
+            closeSettings();
+        }
+    });
+
+    // Foca o primeiro input
+    var dns = document.getElementById('f-dns');
+    if (dns) dns.focus();
+});
+</script>
+</body>
+</html>
