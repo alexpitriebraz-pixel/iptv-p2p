@@ -73,13 +73,37 @@ function handleProxy(req, res, targetUrl, hops) {
             proxyRes.on('data', function(c) { chunks.push(c); });
             proxyRes.on('end', function() {
                 var text = Buffer.concat(chunks).toString('utf8');
-                // Verifica se é realmente m3u8 pelo conteúdo
-                if (!text.trim().startsWith('#EXTM3U') && !text.includes('#EXT-X-')) {
-                    // Não é m3u8 — trata como dado binário (ex: redirect retornou ts)
+
+                // Não começa com #EXTM3U — provavelmente TS binário ou HTML de erro
+                if (!text.trim().startsWith('#EXTM3U')) {
                     res.writeHead(200, { 'Content-Type': ct || 'video/MP2T', 'Access-Control-Allow-Origin': '*' });
                     res.end(Buffer.concat(chunks));
                     return;
                 }
+
+                // É um M3U simples (playlist de canais), não HLS com segmentos
+                // HLS sempre tem #EXT-X-VERSION ou #EXT-X-TARGETDURATION ou #EXT-X-STREAM-INF
+                var isHLS = text.includes('#EXT-X-');
+                if (!isHLS) {
+                    // Extrai a primeira URL do M3U e redireciona pelo proxy
+                    var lines = text.split('\n');
+                    var realUrl = null;
+                    for (var i = 0; i < lines.length; i++) {
+                        var l = lines[i].trim();
+                        if (l.startsWith('http://') || l.startsWith('https://')) {
+                            realUrl = l; break;
+                        }
+                    }
+                    if (realUrl) {
+                        res.writeHead(302, {
+                            'Location': '/proxy?url=' + encodeURIComponent(realUrl),
+                            'Access-Control-Allow-Origin': '*'
+                        });
+                        res.end();
+                        return;
+                    }
+                }
+
                 var rewritten = rewriteM3u8(text, targetUrl);
                 res.writeHead(200, {
                     'Content-Type':                'application/vnd.apple.mpegurl',
@@ -114,6 +138,44 @@ const httpServer = http.createServer(function(req, res) {
 
     if (parsed.pathname === '/proxy') {
         handleProxy(req, res, parsed.query.url || '');
+        return;
+    }
+
+    // Debug: mostra o que o servidor remoto retorna (primeiros 2000 chars)
+    if (parsed.pathname === '/proxy-debug') {
+        var dbUrl = parsed.query.url || '';
+        if (!dbUrl) { res.writeHead(400); res.end('Missing url'); return; }
+        var dbTarget;
+        try { dbTarget = new URL(dbUrl); } catch(e) { res.writeHead(400); res.end('Bad url'); return; }
+        var dbLib = dbTarget.protocol === 'https:' ? https : http;
+        var dbOpts = {
+            hostname: dbTarget.hostname,
+            port: dbTarget.port || (dbTarget.protocol === 'https:' ? 443 : 80),
+            path: dbTarget.pathname + dbTarget.search,
+            method: 'GET',
+            headers: { 'User-Agent': 'Mozilla/5.0' },
+            timeout: 10000
+        };
+        var dbReq = dbLib.request(dbOpts, function(dbRes) {
+            var buf = [];
+            dbRes.on('data', function(c) { buf.push(c); });
+            dbRes.on('end', function() {
+                var body = Buffer.concat(buf);
+                var text = body.slice(0, 2000).toString('utf8');
+                var info = {
+                    status: dbRes.statusCode,
+                    contentType: dbRes.headers['content-type'] || '',
+                    location: dbRes.headers['location'] || '',
+                    bodyLength: body.length,
+                    bodyPreview: text
+                };
+                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                res.end(JSON.stringify(info, null, 2));
+            });
+        });
+        dbReq.on('error', function(e) { res.writeHead(502); res.end(e.message); });
+        dbReq.on('timeout', function() { dbReq.destroy(); res.writeHead(504); res.end('timeout'); });
+        dbReq.end();
         return;
     }
 

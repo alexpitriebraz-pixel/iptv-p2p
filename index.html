@@ -1400,8 +1400,16 @@ function startPlayer(streamUrl, streamId, name, typeLabel, forceNative) {
 
     hls.on(Hls.Events.ERROR, function(ev, d) {
         if (d.fatal) {
-            console.error('HLS fatal error:', d.type, d.details);
-            showPlayerError('Erro no stream: ' + d.details);
+            console.error('HLS fatal error:', d.type, d.details, d);
+            var msg = 'Erro: ' + d.details;
+            if (d.details === 'manifestParsingError') {
+                msg = 'Formato de stream inválido (manifestParsingError). Abre o console do browser (F12) para mais detalhes.';
+            } else if (d.details === 'manifestLoadError' || d.details === 'manifestLoadTimeOut') {
+                msg = 'Falha ao carregar stream. Verifique a URL do servidor.';
+            } else if (d.type === 'networkError') {
+                msg = 'Erro de rede: ' + d.details;
+            }
+            showPlayerError(msg);
         }
     });
 
