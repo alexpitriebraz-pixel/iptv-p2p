@@ -1244,9 +1244,10 @@ function playItem(item) {
     var sid, url;
 
     if (mode === 'series-ep') {
+        var ext = (item._ext || 'mp4').toLowerCase();
         url = pUrl(S.dns + '/series/' + encodeURIComponent(S.user) + '/' + encodeURIComponent(S.pass) +
-              '/' + item.stream_id + '.' + (item._ext || 'mp4'));
-        startPlayer(url, item.stream_id, name, 'SÉRIE');
+              '/' + item.stream_id + '.' + ext);
+        startPlayer(url, item.stream_id, name, 'SÉRIE', ext !== 'm3u8');
         return;
     }
 
@@ -1316,8 +1317,26 @@ function loadEpisodes(series) {
         });
 }
 
-function startPlayer(streamUrl, streamId, name, typeLabel) {
+function showPlayerError(msg) {
+    var existing = document.getElementById('player-err');
+    if (existing) existing.remove();
+    var div = document.createElement('div');
+    div.id = 'player-err';
+    div.style.cssText = 'position:absolute;bottom:130px;left:50%;transform:translateX(-50%);' +
+        'background:rgba(200,0,0,0.85);color:#fff;padding:16px 32px;border-radius:10px;' +
+        'font-size:15px;letter-spacing:1px;z-index:999;text-align:center;max-width:700px;';
+    div.textContent = msg;
+    var ui = document.querySelector('.player-ui');
+    if (ui) ui.appendChild(div);
+    setTimeout(function() { if (div.parentNode) div.remove(); }, 8000);
+}
+
+// forceNative=true → usa <video> direto (MP4/MKV); false → HLS.js
+function startPlayer(streamUrl, streamId, name, typeLabel, forceNative) {
     showScreen('screen-player');
+
+    var existing = document.getElementById('player-err');
+    if (existing) existing.remove();
 
     var chName = document.getElementById('ch-name');
     var chType = document.getElementById('ch-type');
@@ -1332,17 +1351,20 @@ function startPlayer(streamUrl, streamId, name, typeLabel) {
 
     var vid = document.getElementById('vid');
 
-    if (!Hls.isSupported()) {
-        // Fallback nativo (Safari, webOS com suporte HLS nativo)
+    // Vídeo nativo: MP4/MKV de séries, ou navegadores sem HLS.js
+    if (forceNative || !Hls.isSupported()) {
         vid.src = streamUrl;
-        vid.play();
+        vid.play().catch(function(e) { showPlayerError('Erro ao reproduzir: ' + e.message); });
+        connectSignaling(streamId);
+        startStatsLoop();
         return;
     }
 
     var hlsCfg = {};
 
-    // Integra P2P Media Loader se disponível
-    if (typeof HlsJsP2PEngine !== 'undefined') {
+    // P2P Media Loader: só usa quando NÃO estiver via proxy (para não bypassar o proxy)
+    var isProxied = streamUrl.startsWith('/proxy');
+    if (!isProxied && typeof HlsJsP2PEngine !== 'undefined') {
         try {
             var eng = new HlsJsP2PEngine({
                 trackerAnnounce: [TRACKER_WS],
@@ -1362,7 +1384,7 @@ function startPlayer(streamUrl, streamId, name, typeLabel) {
             S.p2p  = eng;
             hlsCfg = eng.getHlsConfig();
         } catch (ex) {
-            console.warn('P2P Engine falhou ao iniciar, usando HLS puro:', ex);
+            console.warn('P2P Engine falhou, usando HLS puro:', ex);
         }
     }
 
@@ -1377,7 +1399,10 @@ function startPlayer(streamUrl, streamId, name, typeLabel) {
     });
 
     hls.on(Hls.Events.ERROR, function(ev, d) {
-        if (d.fatal) { console.error('HLS fatal error:', d.type, d.details); }
+        if (d.fatal) {
+            console.error('HLS fatal error:', d.type, d.details);
+            showPlayerError('Erro no stream: ' + d.details);
+        }
     });
 
     connectSignaling(streamId);

@@ -28,7 +28,10 @@ function rewriteM3u8(text, baseUrl) {
     }).join('\n');
 }
 
-function handleProxy(req, res, targetUrl) {
+function handleProxy(req, res, targetUrl, hops) {
+    hops = hops || 0;
+    if (hops > 5) { res.writeHead(508); res.end('Too many redirects'); return; }
+
     if (!targetUrl) {
         res.writeHead(400); res.end('Missing url'); return;
     }
@@ -51,6 +54,16 @@ function handleProxy(req, res, targetUrl) {
     };
 
     var proxyReq = lib.request(options, function(proxyRes) {
+        // Segue redirecionamentos (301/302/303/307/308)
+        var sc = proxyRes.statusCode;
+        if ((sc === 301 || sc === 302 || sc === 303 || sc === 307 || sc === 308) && proxyRes.headers.location) {
+            var loc = proxyRes.headers.location;
+            if (!loc.startsWith('http')) loc = new URL(loc, targetUrl).href;
+            proxyRes.resume();
+            handleProxy(req, res, loc, hops + 1);
+            return;
+        }
+
         var ct = proxyRes.headers['content-type'] || '';
         var isM3u8 = ct.includes('mpegurl') || ct.includes('x-mpegurl') ||
                      targetUrl.includes('.m3u8') || targetUrl.includes('get.php');
@@ -59,7 +72,14 @@ function handleProxy(req, res, targetUrl) {
             var chunks = [];
             proxyRes.on('data', function(c) { chunks.push(c); });
             proxyRes.on('end', function() {
-                var text     = Buffer.concat(chunks).toString('utf8');
+                var text = Buffer.concat(chunks).toString('utf8');
+                // Verifica se é realmente m3u8 pelo conteúdo
+                if (!text.trim().startsWith('#EXTM3U') && !text.includes('#EXT-X-')) {
+                    // Não é m3u8 — trata como dado binário (ex: redirect retornou ts)
+                    res.writeHead(200, { 'Content-Type': ct || 'video/MP2T', 'Access-Control-Allow-Origin': '*' });
+                    res.end(Buffer.concat(chunks));
+                    return;
+                }
                 var rewritten = rewriteM3u8(text, targetUrl);
                 res.writeHead(200, {
                     'Content-Type':                'application/vnd.apple.mpegurl',
@@ -73,7 +93,7 @@ function handleProxy(req, res, targetUrl) {
             if (ct) headers['Content-Type'] = ct;
             var cl = proxyRes.headers['content-length'];
             if (cl) headers['Content-Length'] = cl;
-            res.writeHead(proxyRes.statusCode, headers);
+            res.writeHead(sc, headers);
             proxyRes.pipe(res);
         }
     });
