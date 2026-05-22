@@ -71,40 +71,36 @@ function handleProxy(req, res, targetUrl, hops) {
         if (isM3u8) {
             var chunks = [];
             proxyRes.on('data', function(c) { chunks.push(c); });
+            proxyRes.on('error', function(e) {
+                if (!res.headersSent) { res.writeHead(502); res.end('Stream error: ' + e.message); }
+            });
             proxyRes.on('end', function() {
-                var text = Buffer.concat(chunks).toString('utf8');
+                var raw  = Buffer.concat(chunks);
+                var text = raw.toString('utf8');
 
-                // Não começa com #EXTM3U — provavelmente TS binário ou HTML de erro
+                // CDN retornou vazio ou não-m3u8: repassa como binário
                 if (!text.trim().startsWith('#EXTM3U')) {
-                    res.writeHead(200, { 'Content-Type': ct || 'video/MP2T', 'Access-Control-Allow-Origin': '*' });
-                    res.end(Buffer.concat(chunks));
+                    res.writeHead(200, { 'Content-Type': ct || 'video/octet-stream', 'Access-Control-Allow-Origin': '*' });
+                    res.end(raw);
                     return;
                 }
 
-                // É um M3U simples (playlist de canais), não HLS com segmentos
-                // HLS sempre tem #EXT-X-VERSION ou #EXT-X-TARGETDURATION ou #EXT-X-STREAM-INF
-                var isHLS = text.includes('#EXT-X-');
-                if (!isHLS) {
-                    // Extrai a primeira URL do M3U e redireciona pelo proxy
+                // M3U simples (sem tags HLS #EXT-X-*): extrai URL real e redireciona
+                if (!text.includes('#EXT-X-')) {
                     var lines = text.split('\n');
                     var realUrl = null;
                     for (var i = 0; i < lines.length; i++) {
                         var l = lines[i].trim();
-                        if (l.startsWith('http://') || l.startsWith('https://')) {
-                            realUrl = l; break;
-                        }
+                        if (l.startsWith('http://') || l.startsWith('https://')) { realUrl = l; break; }
                     }
                     if (realUrl) {
-                        res.writeHead(302, {
-                            'Location': '/proxy?url=' + encodeURIComponent(realUrl),
-                            'Access-Control-Allow-Origin': '*'
-                        });
-                        res.end();
-                        return;
+                        res.writeHead(302, { 'Location': '/proxy?url=' + encodeURIComponent(realUrl), 'Access-Control-Allow-Origin': '*' });
+                        res.end(); return;
                     }
                 }
 
                 var rewritten = rewriteM3u8(text, targetUrl);
+                console.log('[Proxy] m3u8 rewritten ok, bytes:', Buffer.byteLength(rewritten), 'src:', targetUrl.slice(0,60));
                 res.writeHead(200, {
                     'Content-Type':                'application/vnd.apple.mpegurl',
                     'Access-Control-Allow-Origin': '*',
@@ -141,41 +137,55 @@ const httpServer = http.createServer(function(req, res) {
         return;
     }
 
-    // Debug: mostra o que o servidor remoto retorna (primeiros 2000 chars)
+    // Debug: segue redirecionamentos e mostra resultado final
     if (parsed.pathname === '/proxy-debug') {
         var dbUrl = parsed.query.url || '';
         if (!dbUrl) { res.writeHead(400); res.end('Missing url'); return; }
-        var dbTarget;
-        try { dbTarget = new URL(dbUrl); } catch(e) { res.writeHead(400); res.end('Bad url'); return; }
-        var dbLib = dbTarget.protocol === 'https:' ? https : http;
-        var dbOpts = {
-            hostname: dbTarget.hostname,
-            port: dbTarget.port || (dbTarget.protocol === 'https:' ? 443 : 80),
-            path: dbTarget.pathname + dbTarget.search,
-            method: 'GET',
-            headers: { 'User-Agent': 'Mozilla/5.0' },
-            timeout: 10000
-        };
-        var dbReq = dbLib.request(dbOpts, function(dbRes) {
-            var buf = [];
-            dbRes.on('data', function(c) { buf.push(c); });
-            dbRes.on('end', function() {
-                var body = Buffer.concat(buf);
-                var text = body.slice(0, 2000).toString('utf8');
-                var info = {
-                    status: dbRes.statusCode,
-                    contentType: dbRes.headers['content-type'] || '',
-                    location: dbRes.headers['location'] || '',
-                    bodyLength: body.length,
-                    bodyPreview: text
-                };
-                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-                res.end(JSON.stringify(info, null, 2));
+
+        function dbFetch(url, hops) {
+            if (hops > 5) { res.writeHead(508); res.end('too many redirects'); return; }
+            var dbTarget;
+            try { dbTarget = new URL(url); } catch(e) { res.writeHead(400); res.end('Bad url'); return; }
+            var dbLib = dbTarget.protocol === 'https:' ? https : http;
+            var dbOpts = {
+                hostname: dbTarget.hostname,
+                port: dbTarget.port || (dbTarget.protocol === 'https:' ? 443 : 80),
+                path: dbTarget.pathname + dbTarget.search,
+                method: 'GET',
+                headers: { 'User-Agent': 'Mozilla/5.0' },
+                timeout: 10000
+            };
+            var dbReq = dbLib.request(dbOpts, function(dbRes) {
+                var sc2 = dbRes.statusCode;
+                if ([301,302,307,308].includes(sc2) && dbRes.headers.location) {
+                    var loc2 = dbRes.headers.location;
+                    if (!loc2.startsWith('http')) loc2 = new URL(loc2, url).href;
+                    dbRes.resume();
+                    return dbFetch(loc2, hops + 1);
+                }
+                var buf = [];
+                dbRes.on('data', function(c) { buf.push(c); });
+                dbRes.on('end', function() {
+                    var body = Buffer.concat(buf);
+                    var info = {
+                        finalUrl: url,
+                        status: sc2,
+                        headers: dbRes.headers,
+                        bodyLength: body.length,
+                        bodyPreview: body.slice(0, 1000).toString('utf8')
+                    };
+                    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                    res.end(JSON.stringify(info, null, 2));
+                });
+                dbRes.on('error', function(e) {
+                    if (!res.headersSent) { res.writeHead(502); res.end('stream error: ' + e.message); }
+                });
             });
-        });
-        dbReq.on('error', function(e) { res.writeHead(502); res.end(e.message); });
-        dbReq.on('timeout', function() { dbReq.destroy(); res.writeHead(504); res.end('timeout'); });
-        dbReq.end();
+            dbReq.on('error', function(e) { if (!res.headersSent) { res.writeHead(502); res.end(e.message); } });
+            dbReq.on('timeout', function() { dbReq.destroy(); if (!res.headersSent) { res.writeHead(504); res.end('timeout'); } });
+            dbReq.end();
+        }
+        dbFetch(dbUrl, 0);
         return;
     }
 
