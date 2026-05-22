@@ -1,15 +1,102 @@
-// server.js — Tracker WebRTC + servidor HTTP estático
+// server.js — Tracker WebRTC + servidor HTTP estático + Proxy Xtream
 // Render injeta a porta via process.env.PORT
 
 const http      = require('http');
+const https     = require('https');
 const fs        = require('fs');
 const path      = require('path');
+const urlMod    = require('url');
 const WebSocket = require('ws');
 
 const PORT = parseInt(process.env.PORT || '8765', 10);
 
-// ── Servidor HTTP (serve o index.html) ──────────────────────────
+// ── Proxy reverso para evitar mixed-content HTTPS→HTTP ──────────
+function rewriteM3u8(text, baseUrl) {
+    var base = new URL(baseUrl);
+    return text.split('\n').map(function(line) {
+        var t = line.trim();
+        if (!t || t.startsWith('#')) return line;
+        var absUrl;
+        if (t.startsWith('http://') || t.startsWith('https://')) {
+            absUrl = t;
+        } else if (t.startsWith('/')) {
+            absUrl = base.origin + t;
+        } else {
+            absUrl = base.href.replace(/[^/]*$/, '') + t;
+        }
+        return '/proxy?url=' + encodeURIComponent(absUrl);
+    }).join('\n');
+}
+
+function handleProxy(req, res, targetUrl) {
+    if (!targetUrl) {
+        res.writeHead(400); res.end('Missing url'); return;
+    }
+    var target;
+    try { target = new URL(targetUrl); } catch(e) {
+        res.writeHead(400); res.end('Bad url'); return;
+    }
+    if (target.protocol !== 'http:' && target.protocol !== 'https:') {
+        res.writeHead(400); res.end('Bad protocol'); return;
+    }
+
+    var lib = target.protocol === 'https:' ? https : http;
+    var options = {
+        hostname: target.hostname,
+        port:     target.port || (target.protocol === 'https:' ? 443 : 80),
+        path:     target.pathname + target.search,
+        method:   'GET',
+        headers:  { 'User-Agent': 'Mozilla/5.0', 'Connection': 'keep-alive' },
+        timeout:  20000
+    };
+
+    var proxyReq = lib.request(options, function(proxyRes) {
+        var ct = proxyRes.headers['content-type'] || '';
+        var isM3u8 = ct.includes('mpegurl') || ct.includes('x-mpegurl') ||
+                     targetUrl.includes('.m3u8') || targetUrl.includes('get.php');
+
+        if (isM3u8) {
+            var chunks = [];
+            proxyRes.on('data', function(c) { chunks.push(c); });
+            proxyRes.on('end', function() {
+                var text     = Buffer.concat(chunks).toString('utf8');
+                var rewritten = rewriteM3u8(text, targetUrl);
+                res.writeHead(200, {
+                    'Content-Type':                'application/vnd.apple.mpegurl',
+                    'Access-Control-Allow-Origin': '*',
+                    'Cache-Control':               'no-cache'
+                });
+                res.end(rewritten);
+            });
+        } else {
+            var headers = { 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-cache' };
+            if (ct) headers['Content-Type'] = ct;
+            var cl = proxyRes.headers['content-length'];
+            if (cl) headers['Content-Length'] = cl;
+            res.writeHead(proxyRes.statusCode, headers);
+            proxyRes.pipe(res);
+        }
+    });
+
+    proxyReq.on('error', function(err) {
+        if (!res.headersSent) { res.writeHead(502); res.end('Proxy error: ' + err.message); }
+    });
+    proxyReq.on('timeout', function() {
+        proxyReq.destroy();
+        if (!res.headersSent) { res.writeHead(504); res.end('Proxy timeout'); }
+    });
+    proxyReq.end();
+}
+
+// ── Servidor HTTP (serve index.html + proxy) ────────────────────
 const httpServer = http.createServer(function(req, res) {
+    var parsed = urlMod.parse(req.url, true);
+
+    if (parsed.pathname === '/proxy') {
+        handleProxy(req, res, parsed.query.url || '');
+        return;
+    }
+
     var filePath = path.join(__dirname, 'index.html');
     fs.readFile(filePath, function(err, data) {
         if (err) {
@@ -134,5 +221,5 @@ setInterval(function() {
 
 // ── Sobe o servidor ─────────────────────────────────────────────
 httpServer.listen(PORT, function() {
-    console.log('[IPTV P2P Tracker] HTTP + WS rodando em http://0.0.0.0:' + PORT);
+    console.log('[IPTV P2P Tracker] HTTP + WS + Proxy rodando em http://0.0.0.0:' + PORT);
 });

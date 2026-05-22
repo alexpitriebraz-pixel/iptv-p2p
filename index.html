@@ -851,6 +851,14 @@ var S = {
 // URL do tracker WebRTC — detecta automaticamente se está em HTTPS (Render) ou HTTP (local)
 var TRACKER_WS = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
 
+// Proxy reverso: roteia chamadas HTTP pelo servidor quando o app está em HTTPS
+function pUrl(url) {
+    if (location.protocol === 'https:' && url && url.startsWith('http:')) {
+        return '/proxy?url=' + encodeURIComponent(url);
+    }
+    return url;
+}
+
 // ════════════════════════════════════════════════════════════════
 //  HELPERS
 // ════════════════════════════════════════════════════════════════
@@ -942,8 +950,8 @@ function doLogin() {
     S.user = user;
     S.pass = pass;
 
-    var url = dns + '/player_api.php?username=' + encodeURIComponent(user) +
-              '&password=' + encodeURIComponent(pass);
+    var url = pUrl(dns + '/player_api.php?username=' + encodeURIComponent(user) +
+              '&password=' + encodeURIComponent(pass));
 
     showLoading('Autenticando...');
 
@@ -1022,8 +1030,8 @@ function navigateTo(mode) {
     var base = S.dns + '/player_api.php?username=' + encodeURIComponent(S.user) +
                '&password=' + encodeURIComponent(S.pass);
 
-    var catUrl  = base + '&action=' + CAT_ACTIONS[mode];
-    var itemUrl = base + '&action=' + ITEM_ACTIONS[mode];
+    var catUrl  = pUrl(base + '&action=' + CAT_ACTIONS[mode]);
+    var itemUrl = pUrl(base + '&action=' + ITEM_ACTIONS[mode]);
 
     Promise.all([fetchJSON(catUrl), fetchJSON(itemUrl, 30000)])
         .then(function(results) {
@@ -1236,8 +1244,8 @@ function playItem(item) {
     var sid, url;
 
     if (mode === 'series-ep') {
-        url = S.dns + '/series/' + encodeURIComponent(S.user) + '/' + encodeURIComponent(S.pass) +
-              '/' + item.stream_id + '.' + (item._ext || 'mp4');
+        url = pUrl(S.dns + '/series/' + encodeURIComponent(S.user) + '/' + encodeURIComponent(S.pass) +
+              '/' + item.stream_id + '.' + (item._ext || 'mp4'));
         startPlayer(url, item.stream_id, name, 'SÉRIE');
         return;
     }
@@ -1250,12 +1258,12 @@ function playItem(item) {
     sid = item.stream_id || item.id || '';
 
     if (mode === 'movies') {
-        url = S.dns + '/movie/' + encodeURIComponent(S.user) + '/' + encodeURIComponent(S.pass) +
-              '/' + sid + '.m3u8';
+        url = pUrl(S.dns + '/movie/' + encodeURIComponent(S.user) + '/' + encodeURIComponent(S.pass) +
+              '/' + sid + '.m3u8');
     } else {
         // live / catchup
-        url = S.dns + '/live/' + encodeURIComponent(S.user) + '/' + encodeURIComponent(S.pass) +
-              '/' + sid + '.m3u8';
+        url = pUrl(S.dns + '/live/' + encodeURIComponent(S.user) + '/' + encodeURIComponent(S.pass) +
+              '/' + sid + '.m3u8');
     }
 
     startPlayer(url, sid, name, MODE_LABELS[mode] || mode.toUpperCase());
@@ -1263,9 +1271,9 @@ function playItem(item) {
 
 function loadEpisodes(series) {
     var sid = series.series_id || series.id || '';
-    var url = S.dns + '/player_api.php?username=' + encodeURIComponent(S.user) +
+    var url = pUrl(S.dns + '/player_api.php?username=' + encodeURIComponent(S.user) +
               '&password=' + encodeURIComponent(S.pass) +
-              '&action=get_series_info&series_id=' + sid;
+              '&action=get_series_info&series_id=' + sid);
 
     showLoading('Carregando episódios...');
 
